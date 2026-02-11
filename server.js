@@ -6,9 +6,7 @@ const app = express();
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
-  cors: {
-    origin: "*"
-  }
+  cors: { origin: "*" }
 });
 
 const PORT = process.env.PORT || 3000;
@@ -16,14 +14,13 @@ const PORT = process.env.PORT || 3000;
 let players = {};
 
 app.get("/", (req, res) => {
-  res.send("Multiplayer server is running.");
+  res.send("Multiplayer server running.");
 });
 
 io.on("connection", (socket) => {
 
   console.log("Player connected:", socket.id);
 
-  // Create player
   players[socket.id] = {
     x: 400,
     y: 300,
@@ -31,16 +28,13 @@ io.on("connection", (socket) => {
     health: 100
   };
 
-  // Send all current players to new player
   socket.emit("currentPlayers", players);
 
-  // Notify others
   socket.broadcast.emit("newPlayer", {
     id: socket.id,
     player: players[socket.id]
   });
 
-  // Movement update
   socket.on("move", (data) => {
     if (!players[socket.id]) return;
 
@@ -54,7 +48,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Shooting event
   socket.on("shoot", (bullet) => {
     socket.broadcast.emit("bulletFired", {
       id: socket.id,
@@ -62,12 +55,13 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Disconnect
+  socket.on("pingCheck", () => {
+    socket.emit("pongCheck");
+  });
+
   socket.on("disconnect", () => {
-    console.log("Player disconnected:", socket.id);
-
+    console.log("Disconnected:", socket.id);
     delete players[socket.id];
-
     io.emit("playerDisconnected", socket.id);
   });
 
