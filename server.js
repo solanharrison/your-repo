@@ -1,58 +1,98 @@
-import express from "express";
-import { createServer } from "http";
-import { Server } from "socket.io";
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
 
 const app = express();
-const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: { origin: "*" } });
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: "*" }
+});
+
+app.use(express.static("public"));
 
 const PORT = process.env.PORT || 3000;
+
 let players = {};
+let gameState = "WAITING";
+let killerId = null;
+let timer = 120;
+let interval = null;
 
 io.on("connection", (socket) => {
-  players[socket.id] = {
-    x: Math.random() * 1800 + 100,
-    y: Math.random() * 1800 + 100,
-    angle: 0,
-    health: 100,
-    kills: 0
-  };
+  socket.on("join", (name) => {
+    players[socket.id] = {
+      id: socket.id,
+      name,
+      x: Math.random() * 800,
+      y: Math.random() * 500,
+      role: "survivor",
+      alive: true
+    };
 
-  socket.emit("currentPlayers", players);
-  socket.broadcast.emit("newPlayer", { id: socket.id, player: players[socket.id] });
+    io.emit("players", players);
+  });
 
   socket.on("move", (data) => {
-    if (players[socket.id]) {
-      players[socket.id].x = data.x;
-      players[socket.id].y = data.y;
-      players[socket.id].angle = data.angle;
-      socket.broadcast.emit("playerMoved", { id: socket.id, player: players[socket.id] });
+    if (!players[socket.id] || !players[socket.id].alive) return;
+
+    players[socket.id].x = data.x;
+    players[socket.id].y = data.y;
+
+    // Kill detection
+    if (socket.id === killerId) {
+      for (let id in players) {
+        if (id !== killerId && players[id].alive) {
+          const dx = players[id].x - players[killerId].x;
+          const dy = players[id].y - players[killerId].y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist < 80) {
+            players[id].alive = false;
+            io.emit("blood", players[id]);
+          }
+        }
+      }
     }
+
+    io.emit("players", players);
   });
 
-  socket.on("shoot", (bullet) => {
-    io.emit("bulletFired", { id: socket.id, bullet });
-  });
+  socket.on("startGame", () => {
+    if (gameState !== "WAITING") return;
 
-  socket.on("killPlayer", (victimId) => {
-    if (players[victimId]) {
-        io.emit("playerKilled", victimId);
-        // Respawn Logic
-        setTimeout(() => {
-            if(players[victimId]) {
-                players[victimId].health = 100;
-                players[victimId].x = Math.random() * 1800 + 100;
-                players[victimId].y = Math.random() * 1800 + 100;
-                io.emit("newPlayer", { id: victimId, player: players[victimId] });
-            }
-        }, 3000);
-    }
+    const ids = Object.keys(players);
+    if (ids.length < 2) return;
+
+    killerId = ids[Math.floor(Math.random() * ids.length)];
+    players[killerId].role = "killer";
+
+    gameState = "PLAYING";
+    timer = 120;
+
+    interval = setInterval(() => {
+      timer--;
+      io.emit("timer", timer);
+
+      const aliveSurvivors = Object.values(players).filter(
+        p => p.alive && p.role === "survivor"
+      );
+
+      if (timer <= 0 || aliveSurvivors.length === 0) {
+        clearInterval(interval);
+        gameState = "ENDED";
+        io.emit("gameOver", aliveSurvivors.length === 0 ? "KILLER" : "SURVIVORS");
+      }
+    }, 1000);
+
+    io.emit("gameStarted", { killerId });
   });
 
   socket.on("disconnect", () => {
     delete players[socket.id];
-    io.emit("playerDisconnected", socket.id);
+    io.emit("players", players);
   });
 });
 
-httpServer.listen(PORT, () => console.log("Arena Server Live on " + PORT));
+server.listen(PORT, () => {
+  console.log("Server running on port " + PORT);
+});
