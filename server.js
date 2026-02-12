@@ -17,8 +17,16 @@ app.get("/", (req, res) => {
   res.send("Multiplayer server running.");
 });
 
-io.on("connection", (socket) => {
+// Helper function to reset player position (Respawn)
+function respawnPlayer(id) {
+    if (players[id]) {
+        players[id].x = Math.floor(Math.random() * 700) + 50;
+        players[id].y = Math.floor(Math.random() * 500) + 50;
+        players[id].health = 100;
+    }
+}
 
+io.on("connection", (socket) => {
   console.log("Player connected:", socket.id);
 
   players[socket.id] = {
@@ -29,7 +37,6 @@ io.on("connection", (socket) => {
   };
 
   socket.emit("currentPlayers", players);
-
   socket.broadcast.emit("newPlayer", {
     id: socket.id,
     player: players[socket.id]
@@ -55,6 +62,25 @@ io.on("connection", (socket) => {
     });
   });
 
+  // --- NEW: KILL & RESPAWN FEATURE ---
+  socket.on("killPlayer", (victimId) => {
+    if (players[victimId]) {
+      console.log(`${socket.id} killed ${victimId}`);
+      
+      // Tell everyone this player died
+      io.emit("playerKilled", victimId);
+
+      // Give it a small delay before they reappear at a random spot
+      setTimeout(() => {
+        respawnPlayer(victimId);
+        io.emit("newPlayer", {
+          id: victimId,
+          player: players[victimId]
+        });
+      }, 2000); 
+    }
+  });
+
   socket.on("pingCheck", () => {
     socket.emit("pongCheck");
   });
@@ -64,7 +90,6 @@ io.on("connection", (socket) => {
     delete players[socket.id];
     io.emit("playerDisconnected", socket.id);
   });
-
 });
 
 httpServer.listen(PORT, () => {
